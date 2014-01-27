@@ -46,7 +46,9 @@ function leaflet_field_formatter_info() {
             'x' => '',
             'y' => '',
           ),
-          'html' => '',
+          'html' => '', // This is the legacy setting.
+          'marker_html_field' => '',
+          'marker_html_raw' => '',
           'htmlClass' => '',
         ),
         'vector_display' => array(
@@ -330,18 +332,29 @@ function leaflet_process_geofield($items = array()) {
  *   Leaflet map definition.
  * @array $features
  *   Associative array of map features.
+ *   Each feature might hold the following settings:
+ *   - type (required): Type of the feature, like 'point', 'linestring',
+ *     'polygon', ...
+ *   - points: Information about points for some feature types
+ *   - component: Information about polygon like data.
+ *   - entity: An entity passed as context for token replacement.
+ *   //- popup: Text/HTML to place in the popup for the given feature.
+ *   //- icon:
+ *   //- html
+ *   //- html_class
  * @array $map_settings
  *   Map settings returned by a settings form.
+ *   - zoom
+ *   - icon
+ *   - html
+ *   - html_class
+ *   - popup
+ *   - vectory_display
  * @string $entity_type
  *   Entity type this map is being displayed for.
  *
  */
 function leaflet_apply_map_settings(&$map, &$features, $map_settings, $entity_type) {
-  // These are the settings key that will be tokenized by entity:
-  $token_by_entity = array(
-    'popup',
-    'icon',
-  );
 
   // Apply zoom settings (will override hook_leaflet_map_info() values):
   if (isset($map_settings['zoom']['initialZoom']) && $map_settings['zoom']['initialZoom'] >= 0) {
@@ -354,18 +367,18 @@ function leaflet_apply_map_settings(&$map, &$features, $map_settings, $entity_ty
     $map['settings']['maxZoom'] = strval($map_settings['zoom']['maxZoom']);
   }
 
-  $icon = 'none';
+  $icon_type = 'none';
   if (isset($map_settings['icon']['iconType'])) {
-    $icon = $map_settings['icon']['iconType'];
+    $icon_type = $map_settings['icon']['iconType'];
     $classes = NULL;
-    if ($icon == 'html' && isset($map_settings['icon']['htmlClass'])) {
+    if ($icon_type == 'html' && isset($map_settings['icon']['htmlClass'])) {
       // Clean the user-entered classes.
       $classes = explode(' ', $map_settings['icon']['htmlClass']);
       array_walk($classes, 'drupal_html_class');
       $map_settings['icon']['htmlClass'] = implode(' ', $classes);
     }
     elseif (!$map_settings['icon']['iconUrl']) {
-      $icon = 'none';
+      $icon_type = 'none';
     }
   }
 
@@ -376,50 +389,83 @@ function leaflet_apply_map_settings(&$map, &$features, $map_settings, $entity_ty
 
   foreach ($features as &$feat) {
     // Apply tokens where relevant:
-    $settings = $map_settings;
     $entity = !empty($feat['entity']) ? $feat['entity'] : NULL;
-    $token_args = array('data' => array($entity_type => $entity), 'options' => array('clear' => TRUE));
-    foreach ($token_by_entity as $key) {
-      if (isset($settings[$key]) && is_array($settings[$key])) {
-        array_walk_recursive($settings[$key], 'leaflet_token_replace', $token_args);
-      }
+
+    // If we got an entity, we may prepare the settings with entity specific
+    // data.
+    if ($entity) {
+      $settings = _leaflet_prepare_map_settings_per_entity($map_settings, $entity_type, $entity);
     }
 
     if (isset($settings['popup']['show']) && $settings['popup']['show']) {
       $feat['popup'] = $settings['popup']['text'];
     }
 
-    // Apply Icon settings:
-    if ($icon == 'html') {
-      $icon_config = array(
-        'label' => 'hidden',
-        'settings' => array(
-          'image_style' => isset($settings['icon']['iconImageStyle']) ? $settings['icon']['iconImageStyle'] : '',
-        ),
-      );
-      $icon_field = field_view_field($entity_type, $feat['entity'], $settings['icon']['html'], $icon_config);
-      if (!empty($settings['icon']['iconSize']['x']) || !empty($settings['icon']['iconSize']['y'])) {
-        // We hand the size off to the API, but the rendered HTML will dictate
-        // its own size, so we override that as well.
-        // @todo: actually allow the API settings to control this.
-        $feat['icon']['iconSize'] = $settings['icon']['iconSize'];
-        foreach (element_children($icon_field) as $i) {
-          if (!empty($settings['icon']['iconSize']['x'])) {
-            $icon_field[$i]['#item']['width'] = $settings['icon']['iconSize']['x'];
-            unset($icon_field[$i]['#item']['width']);
-          }
-          if (!empty($settings['icon']['iconSize']['y'])) {
-            $icon_field[$i]['#item']['height'] = $settings['icon']['iconSize']['y'];
-            unset($icon_field[$i]['#item']['width']);
+    // Icon type 'html' means, we should provide a divIcon.
+    // @see http://leafletjs.com/reference.html#divicon
+    if ($icon_type == 'html') {
+      $icon_data = array();
+
+      // Provide fallback for legacy html setting.
+      if (!isset($settings['icon']['marker_html_field']) && isset($settings['icon']['html'])) {
+        $settings['icon']['marker_html_field'] = $settings['icon']['html'];
+      }
+
+      // If we are dealing with marker_html_field setting, we get the data from
+      // a field.
+      // This can only work, if we got an element.
+      if (!empty($settings['icon']['marker_html_field'])) {
+        if (!$entity) {
+          throw new ErrorException('Missing entity in leaflet feature data.');
+        }
+
+        $icon_config = array(
+          'label' => 'hidden',
+          'settings' => array(
+            'image_style' => isset($settings['icon']['iconImageStyle']) ? $settings['icon']['iconImageStyle'] : '',
+          ),
+        );
+        $icon_field = field_view_field($entity_type, $entity, $settings['icon']['marker_html_field'], $icon_config);
+
+        if (!empty($settings['icon']['iconSize']['x']) || !empty($settings['icon']['iconSize']['y'])) {
+          // We hand the size off to the API, but the rendered HTML will dictate
+          // its own size, so we override that as well.
+          // @todo: actually allow the API settings to control this.
+          $icon_data['iconSize'] = $settings['icon']['iconSize'];
+          foreach (element_children($icon_field) as $i) {
+            if (!empty($settings['icon']['iconSize']['x'])) {
+              $icon_field[$i]['#item']['width'] = $settings['icon']['iconSize']['x'];
+              unset($icon_field[$i]['#item']['width']);
+            }
+            if (!empty($settings['icon']['iconSize']['y'])) {
+              $icon_field[$i]['#item']['height'] = $settings['icon']['iconSize']['y'];
+              unset($icon_field[$i]['#item']['width']);
+            }
           }
         }
+
+        // Provide rendered marker markup.
+        $icon_data['html'] = render($icon_field);
       }
-      $feat['html'] = render($icon_field);
-      $feat['html_class'] = $settings['icon']['htmlClass'];
-      $feat['icon']['iconAnchor'] = $settings['icon']['iconAnchor'];
+      // If we got no field to select data form, we use marker_html. We even
+      // build a marker with empty html, as this is valid for leaflet.
+      else {
+        if (!empty($settings['icon']['iconSize']['x']) || !empty($settings['icon']['iconSize']['y'])) {
+          $icon_data['iconSize'] = $settings['icon']['iconSize'];
+        }
+        // We get the html content from the
+        $icon_data['html'] = $settings['icon']['marker_html'];
+      }
+
+      $icon_data['className'] = $settings['icon']['htmlClass'];
+      $icon_data['iconAnchor'] = $settings['icon']['iconAnchor'];
+      $feat['divIcon'] = $icon_data;
     }
-    if ($icon == 'marker') {
+    // Otherwise 'marker' stands for the default 'icon'.
+    // @see http://leafletjs.com/reference.html#icon
+    elseif ($icon_type == 'marker') {
       $feat['icon'] = $settings['icon'];
+
       unset($feat['icon']['html']);
       unset($feat['icon']['html_class']);
     }
@@ -452,17 +498,46 @@ function leaflet_token_replace(&$subject, $key, $data = array()) {
 }
 
 /**
+ * Prepares map settings by replacing with entity tokens.
+ *
+ * @param array $settings
+ *   Map settings, maybe holding token patterns for replacement.
+ * @param string $entity_type
+ *   The entity type of the entity to replace with.
+ * @param object $entity
+ *   The entity for getting replacement data.
+ *
+ * @return array
+ *   Settings recursively replaced with token values.
+ */
+function _leaflet_prepare_map_settings_per_entity($settings, $entity_type, $entity) {
+  // These are the settings key that will be tokenized by entity:
+  $token_by_entity = array(
+    'popup',
+    'icon',
+  );
+
+  $token_args = array('data' => array($entity_type => $entity), 'options' => array('clear' => TRUE));
+  foreach ($token_by_entity as $key) {
+    if (isset($settings[$key])) {
+      array_walk_recursive($settings[$key], 'leaflet_token_replace', $token_args);
+    }
+  }
+  return $settings;
+}
+
+/**
  * Helper function to standardize forms between views and field formatters.
- * 
+ *
  * $group - String
  *  The name of the group element to generate.
- * 
+ *
  * $settings - Array
  *  Current form settings (for defaults, etc)
- * 
+ *
  * $options - Array
  *  Special options needed for this form element, if necessary.
- * 
+ *
  * Return - A fully loaded form element.
  */
 function leaflet_form_elements($group, $settings, $options = NULL) {
@@ -584,22 +659,43 @@ function leaflet_form_elements($group, $settings, $options = NULL) {
           ),
         ),
       );
-      $form_element['html'] = array(
-        '#type' => 'select',
-        '#title' => t('Marker field'),
-        '#description' => t('Field to use as output for a map marker.'),
-        '#options' => array_merge(array('' => ''), $options['fields']),
-        '#default_value' => isset($settings[$group]['html']) ? $settings[$group]['html'] : '',
-        '#empty_option' => t('-- Select --'),
+
+      // We've got two ways of getting data for the marker html.
+      // 1) Simple text replacement.
+      $form_element['marker_html'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Marker HTML'),
+        '#description' => t('HTML to set as marker content. May contain token replacement patterns.'),
+        '#default_value' => isset($settings[$group]['marker_html']) ? $settings[$group]['marker_html'] : '',
         '#states' => array(
           'visible' => array(
             ':input[name="' . $options['path'] . '[icon][iconType]"]' => array('value' => 'html'),
           ),
-          'required' => array(
+        ),
+      );
+      // 2) Field of the entity.
+      // Use legacy html option as fallback.
+      if (!isset($settings[$group]['html_field']) && isset($settings[$group]['html'])) {
+        $html_field = $settings[$group]['html'];
+      }
+      else {
+        $html_field = isset($settings[$group]['html_field']) ? $settings[$group]['html_field'] : '';
+      }
+      $form_element['marker_html_field'] = array(
+        '#type' => 'select',
+        '#title' => t('Marker field'),
+        '#description' => t('Field to use as output for a map marker. Will override the value entered in "@marker_html" on selection.', array('@marker_html' => t('Marker HTML'))),
+        '#options' => array_merge(array('' => ''), $options['fields']),
+        '#default_value' => $html_field,
+        '#empty_option' => t('-- None --'),
+        '#states' => array(
+          'visible' => array(
             ':input[name="' . $options['path'] . '[icon][iconType]"]' => array('value' => 'html'),
           ),
         ),
+        '#access' => !empty($options['fields']),
       );
+
       $form_element['iconImageStyle'] = array(
         '#title' => t('Icon image style'),
         '#type' => 'select',
@@ -872,6 +968,8 @@ function leaflet_form_elements($group, $settings, $options = NULL) {
         '#type' => 'container',
         '#theme' => 'token_tree',
         '#token_types' => array($options['entity_type']),
+        '#recursion_limit' => 3,
+        '#dialog' => TRUE,
       );
       break;
 
