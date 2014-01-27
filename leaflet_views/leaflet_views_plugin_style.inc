@@ -238,8 +238,14 @@ class leaflet_views_plugin_style extends views_plugin_style {
 
         if (!empty($geofield)) {
           $entity = FALSE;
+
+          // Get the entity for this row to pass to the map settings builder.
+          if (!empty($this->entity_type) && is_object($result) && !empty($result->{$this->entity_info['entity keys']['id']})) {
+            $entity = entity_load_single($this->entity_type, $result->{$this->entity_info['entity keys']['id']});
+          }
+
           // Render the entity with the selected view mode:
-          if ($this->options['description_field'] === '#rendered_entity' && is_object($result)) {
+          if ($entity && $this->options['description_field'] === '#rendered_entity') {
             $entity = entity_load_single($this->entity_type, $result->{$this->entity_info['entity keys']['id']});
             $build = entity_view($this->entity_type, array($entity), $this->options['view_mode']);
             $description = drupal_render($build);
