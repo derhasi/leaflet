@@ -250,21 +250,25 @@ class leaflet_views_plugin_style extends views_plugin_style {
           }
 
           $points = leaflet_process_geofield($geofield);
-          // Attach pop-ups if we have rendered into $description:
-          if (isset($description)) {
-            foreach ($points as &$point) {
+
+          // Provide additional data for every point.
+          foreach ($points as &$point) {
+            // Attach pop-ups if we have rendered into $description.
+            if (isset($description)) {
               $point['popup'] = $description;
             }
-          }
-          // Attach also titles & entities, they might be used later on.
-          if ($this->options['name_field']) {
-            foreach ($points as &$point) {
+
+            // Attach title, if configured. It may be used later.
+            if ($this->options['name_field']) {
               $point['label'] = $this->rendered_fields[$id][$this->options['name_field']];
-              if ($entity !== FALSE) {
-                $point['entity'] = $entity;
-              }
+            }
+
+            // Attach entity, if we got one. It may be used later.
+            if ($entity !== FALSE) {
+              $point['entity'] = $entity;
             }
           }
+
           // Let modules modify the points data.
           drupal_alter('leaflet_views_alter_points_data', $result, $points);
           // Merge these points into the $data array for map rendering:
