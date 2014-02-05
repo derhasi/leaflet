@@ -220,10 +220,17 @@
         else {
           var icon = new L.DivIcon({html: marker.divIcon.html});
         }
-        // override applicable marker defaults
+        // Override applicable marker defaults.
         if (marker.divIcon.iconSize) {
           icon.options.iconSize = new L.Point(parseInt(marker.divIcon.iconSize.x, 10), parseInt(marker.divIcon.iconSize.y, 10));
         }
+        // Reset icon size to null, so we can set it in css, if there is no
+        // concrete size given.
+        // @see https://groups.google.com/forum/#!msg/leaflet-js/apXJyrRzuPo/f9bGPChJK58J
+        else {
+          icon.options.iconSize = null;
+        }
+
         if (marker.divIcon.iconAnchor) {
           icon.options.iconAnchor = new L.Point(parseFloat(marker.divIcon.iconAnchor.x), parseFloat(marker.divIcon.iconAnchor.y));
         }
