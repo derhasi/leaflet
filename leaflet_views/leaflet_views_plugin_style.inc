@@ -68,6 +68,9 @@ class leaflet_views_plugin_style extends views_plugin_style {
         )),
       'html' => array('default' => ''),
       'htmlClass' => array('default' => ''),
+      'iconType' => array('default' => 'icon'),
+      'marker_html_field' => array('default' => ''),
+      'marker_html' => array('default' => ''),
     );
     $options['vector_display']['contains'] = array(
       'stroke_override' => array('default' => 0),
